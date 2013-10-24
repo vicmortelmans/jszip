@@ -170,7 +170,7 @@ JSZip.prototype = (function () {
     * @param {function} filter a function String -> String, applied if not null on the result.
     * @return {String} the string representing this._data.
     */
-   var dataToString = function (asUTF8) {
+   var dataToString = function (asUTF8, callback) {
       var result = getRawData(this);
       if (result === null || typeof result === "undefined") {
          return "";
@@ -182,7 +182,11 @@ JSZip.prototype = (function () {
       if (asUTF8 && this.options.binary) {
          // JSZip.prototype.utf8decode supports arrays as input
          // skip to array => string step, utf8decode will do it.
-         result = JSZip.prototype.utf8decode(result);
+         if (typeof callback === "undefined") {
+            result = JSZip.prototype.utf8decode(result);
+         } else {
+            result = JSZip.prototype.utf8decode(result, callback);
+         }
       } else {
          // no utf8 transformation, do the array => string step.
          result = JSZip.utils.transformTo("string", result);
@@ -213,6 +217,14 @@ JSZip.prototype = (function () {
        */
       asText : function () {
          return dataToString.call(this, true);
+      },
+      /**
+       * Return the content as UTF8 string as parameter to a callback.
+       * @return none
+       */
+      asTextAsync : function (callback) {
+         dataToString.call(this, true, callback);        
+         return;
       },
       /**
        * Returns the binary content.
@@ -950,12 +962,15 @@ JSZip.prototype = (function () {
       /**
        * http://www.webtoolkit.info/javascript-utf8.html
        */
-      utf8decode : function (input) {
-         var result = [], resIndex = 0;
+      utf8decode : function (input, callback, resumeI, resumeResult, resumeResIndex) {
+         var result = typeof resumeResult !== "undefined" ? resumeResult : []
+         var resIndex = typeof resumeResIndex !== "undefined" ? resumeResIndex : 0;
          var type = JSZip.utils.getTypeOf(input);
          var isArray = type !== "string";
-         var i = 0;
+         var async = typeof callback !== "undefined";
+         var i = typeof resumeI !== "undefined" ? resumeI : 0;
          var c = 0, c1 = 0, c2 = 0, c3 = 0;
+         var load = 0;
 
          // check if we can use the TextDecoder API
          // see http://encoding.spec.whatwg.org/#api
@@ -969,6 +984,16 @@ JSZip.prototype = (function () {
          }
 
          while ( i < input.length ) {
+
+            if (async && load > 1000) {
+               // break up here and perform the rest asynchronously
+               (function(input, callback, i, result, resIndex) {
+                  setTimeout(function() {
+                     JSZip.prototype.utf8decode(input, callback, i, result, resIndex);
+                  }, 1);
+               }) (input, callback, i, result, resIndex);
+               return;
+            }
 
             c = isArray ? input[i] : input.charCodeAt(i);
 
@@ -986,9 +1011,16 @@ JSZip.prototype = (function () {
                i += 3;
             }
 
+            load++;
+
          }
 
-         return result.join("");
+         if (async) {
+            callback(result.join(""));
+            return;
+         } else {
+            return result.join("");
+         }
       }
    };
 }());
